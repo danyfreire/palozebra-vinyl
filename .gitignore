@@ -1,0 +1,5 @@
+/build/
+/JUCE/
+*.user
+*.suo
+.vs/
