@@ -1,0 +1,26 @@
+name: Build Windows VST3
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build VST3 and smoke test
+        shell: pwsh
+        run: .\build-windows.ps1
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v5
+        with:
+          name: Palozebra-Vinyl-Windows-VST3
+          path: build/PalozebraVinyl_artefacts/Release/VST3/Palozebra Vinyl.vst3
+          if-no-files-found: error
