@@ -38,16 +38,14 @@ void PalozebraVinylAudioProcessor::prepareToPlay(double sampleRate, int samplesP
 {
     currentSampleRate = juce::jmax(1.0, sampleRate);
 
-    // The scratch engine processes the selected source bus, which is constrained to match
-    // the mono/stereo main output layout.
     engine.prepare(currentSampleRate, juce::jmax(1, getMainBusNumOutputChannels()), 8.0);
     setLatencySamples(static_cast<int>(engine.getLatencySamples()));
 
     const auto maxGestureSamples = static_cast<std::size_t>(std::ceil(currentSampleRate * maxGestureSeconds));
     gestureBuffer.assign(maxGestureSamples, 1.0f);
 
-    // Hosts may occasionally deliver blocks larger than the estimate passed here. Reserve
-    // a generous scratch curve up-front and grow only if an unusual host requires it.
+    // JUCE notes that hosts may provide blocks larger than the estimate passed to prepareToPlay.
+    // Reserve generously so normal playback never needs to allocate in the audio callback.
     const auto scratchSize = static_cast<std::size_t>(juce::jmax(samplesPerBlock, 65536));
     speedCurveScratch.assign(scratchSize, 1.0f);
 
@@ -128,37 +126,45 @@ void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
 {
     juce::ScopedNoDenormals noDenormals;
 
-    auto mainInput = getBusBuffer(buffer, true, 0);
-    auto output = getBusBuffer(buffer, false, 0);
+    auto* mainInputBus = getBus(true, 0);
+    auto* outputBus = getBus(false, 0);
+    auto* sourceBus = getBusCount(true) > 1 ? getBus(true, 1) : nullptr;
 
-    const bool sourceBusEnabled = getBusCount(true) > 1
-        && getBus(true, 1) != nullptr
-        && getBus(true, 1)->isEnabled();
+    if (mainInputBus == nullptr || outputBus == nullptr)
+        return;
 
-    auto selectedInput = mainInput;
-    if (sourceBusEnabled)
-    {
-        auto sourceInput = getBusBuffer(buffer, true, 1);
-        if (sourceInput.getNumChannels() == output.getNumChannels())
-            selectedInput = sourceInput;
-    }
+    const bool useAux = sourceBus != nullptr
+        && sourceBus->isEnabled()
+        && sourceBus->getNumberOfChannels() == outputBus->getNumberOfChannels();
 
-    const bool usingAux = sourceBusEnabled && selectedInput.getNumChannels() == output.getNumChannels();
-    usingSourceInput.store(usingAux);
+    auto* selectedInputBus = useAux ? sourceBus : mainInputBus;
+    usingSourceInput.store(useAux);
 
-    float peak = 0.0f;
-    for (int ch = 0; ch < selectedInput.getNumChannels(); ++ch)
-        peak = juce::jmax(peak, selectedInput.getMagnitude(ch, 0, selectedInput.getNumSamples()));
-    sourceLevel.store(peak);
-
-    const int numSamples = output.getNumSamples();
-    const int channels = juce::jmin({ 2, selectedInput.getNumChannels(), output.getNumChannels() });
+    const int numSamples = buffer.getNumSamples();
+    const int channels = juce::jmin({ 2,
+                                      selectedInputBus->getNumberOfChannels(),
+                                      outputBus->getNumberOfChannels() });
 
     if (channels <= 0 || numSamples <= 0)
-    {
-        output.clear();
         return;
+
+    std::array<const float*, 2> inputs{};
+    std::array<float*, 2> outputs{};
+
+    float peak = 0.0f;
+    for (int ch = 0; ch < channels; ++ch)
+    {
+        const int inputIndex = selectedInputBus->getChannelIndexInProcessBlockBuffer(ch);
+        const int outputIndex = outputBus->getChannelIndexInProcessBlockBuffer(ch);
+
+        inputs[static_cast<std::size_t>(ch)] = buffer.getReadPointer(inputIndex);
+        outputs[static_cast<std::size_t>(ch)] = buffer.getWritePointer(outputIndex);
+
+        const auto* input = inputs[static_cast<std::size_t>(ch)];
+        for (int sample = 0; sample < numSamples; ++sample)
+            peak = juce::jmax(peak, std::abs(input[sample]));
     }
+    sourceLevel.store(peak);
 
     if (speedCurveScratch.size() < static_cast<std::size_t>(numSamples))
         speedCurveScratch.resize(static_cast<std::size_t>(numSamples), 1.0f);
@@ -182,7 +188,6 @@ void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
             }
             else
             {
-                // A take ends on normal platter speed. There is no automatic catch-up.
                 speedCurveScratch[static_cast<std::size_t>(sample)] = 1.0f;
                 gesturePlaying.store(false);
             }
@@ -215,14 +220,6 @@ void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
         engine.setTargetSpeed(commandedSpeed);
     }
 
-    std::array<const float*, 2> inputs{};
-    std::array<float*, 2> outputs{};
-    for (int ch = 0; ch < channels; ++ch)
-    {
-        inputs[static_cast<std::size_t>(ch)] = selectedInput.getReadPointer(ch);
-        outputs[static_cast<std::size_t>(ch)] = output.getWritePointer(ch);
-    }
-
     engine.process(inputs.data(),
                    outputs.data(),
                    channels,
@@ -231,8 +228,8 @@ void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
 
     effectiveSpeed.store(static_cast<float>(engine.getCurrentSpeed()));
 
-    // Optional telemetry as CC74 remains secondary; the internal gesture recorder no longer
-    // depends on MIDI or host automation.
+    // Optional telemetry as CC74. Internal gesture recording does not depend on MIDI or
+    // on the DAW's automation system.
     if (midiOutParam != nullptr && midiOutParam->load() > 0.5f)
     {
         const auto normalised = juce::jlimit(0.0f, 1.0f, (commandedSpeed + 4.0f) / 8.0f);
