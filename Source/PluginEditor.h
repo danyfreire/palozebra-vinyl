@@ -28,18 +28,29 @@ private:
     bool dragging = false;
 };
 
-class PalozebraVinylAudioProcessorEditor final : public juce::AudioProcessorEditor
+class PalozebraVinylAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                                  private juce::Timer
 {
 public:
     explicit PalozebraVinylAudioProcessorEditor(PalozebraVinylAudioProcessor&);
-    ~PalozebraVinylAudioProcessorEditor() override = default;
+    ~PalozebraVinylAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
+    void timerCallback() override;
+    void refreshTransportUi();
+
     PalozebraVinylAudioProcessor& processor;
     VinylWheel wheel;
+
+    juce::TextButton recordButton { "REC" };
+    juce::TextButton playButton { "PLAY" };
+    juce::TextButton clearButton { "CLEAR" };
+    juce::Label sourceLabel;
+    juce::Label takeLabel;
+
     juce::ToggleButton midiOutButton { "MIDI CC" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> midiAttachment;
 
