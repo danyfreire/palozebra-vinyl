@@ -141,9 +141,9 @@ void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     usingSourceInput.store(useAux);
 
     const int numSamples = buffer.getNumSamples();
-    const int channels = juce::jmin({ 2,
-                                      selectedInputBus->getNumberOfChannels(),
-                                      outputBus->getNumberOfChannels() });
+    const int channels = std::min({ 2,
+                                    selectedInputBus->getNumberOfChannels(),
+                                    outputBus->getNumberOfChannels() });
 
     if (channels <= 0 || numSamples <= 0)
         return;
