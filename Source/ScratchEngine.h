@@ -65,14 +65,12 @@ public:
             for (int ch = 0; ch < chCount; ++ch)
                 outputs[ch][sample] = readCubic(ch, readPos);
 
+            // The platter moves only at the requested physical speed. In particular, when
+            // the user releases the wheel and targetSpeed returns to 1x, we do NOT speed up
+            // behind the scenes to catch the DAW timeline. That audible fast-forward was
+            // unnatural for a turntable. A future explicit sync gesture can return to live.
             readPos = wrap(readPos + currentSpeed);
             writePos = (writePos + 1) % bufferSize;
-
-            // When the wheel is essentially back at 1x, gently servo the read head back
-            // to the nominal live delay. This prevents a scratch from leaving a permanent
-            // multi-second offset while keeping the manipulation natural.
-            if (std::abs(targetSpeed - 1.0) < 0.0001)
-                applyReturnToLiveServo();
         }
     }
 
@@ -110,26 +108,6 @@ private:
         const float a2 = -0.5f * y0 + 0.5f * y2;
         const float a3 = y1;
         return ((a0 * frac + a1) * frac + a2) * frac + a3;
-    }
-
-    double signedDistance(double from, double to) const noexcept
-    {
-        double d = to - from;
-        const double half = static_cast<double>(bufferSize) * 0.5;
-        if (d > half) d -= static_cast<double>(bufferSize);
-        if (d < -half) d += static_cast<double>(bufferSize);
-        return d;
-    }
-
-    void applyReturnToLiveServo() noexcept
-    {
-        const double desired = wrap(static_cast<double>(writePos + bufferSize - baseDelaySamples));
-        const double error = signedDistance(readPos, desired);
-
-        // Small proportional correction. It catches up after a scratch but never jumps.
-        // Clamp keeps the recovery from sounding like an absurd fast-forward.
-        const double correction = std::clamp(error * 0.00035, -0.75, 1.5);
-        readPos = wrap(readPos + correction);
     }
 
     double sampleRate = 44100.0;
