@@ -94,7 +94,7 @@ void VinylWheel::paint(juce::Graphics& g)
     for (int i = 1; i <= 9; ++i)
     {
         const float inset = static_cast<float>(i) * diameter * 0.035f;
-        g.setColour(juce::Colour::fromRGBA(255, 255, 255, 16 + i * 2));
+        g.setColour(juce::Colour::fromRGBA(255, 255, 255, static_cast<juce::uint8>(16 + i * 2)));
         g.drawEllipse(disc.reduced(inset), 1.0f);
     }
 
@@ -140,7 +140,7 @@ void PalozebraVinylAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.setColour(juce::Colours::white.withAlpha(0.58f));
     g.setFont(juce::FontOptions(13.0f));
-    g.drawText("grab · drag · release", 20, 450, getWidth() - 40, 24, juce::Justification::centred);
+    g.drawText("grab · drag · release · v0.1.1", 20, 450, getWidth() - 40, 24, juce::Justification::centred);
 }
 
 void PalozebraVinylAudioProcessorEditor::resized()
