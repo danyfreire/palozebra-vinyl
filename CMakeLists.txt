@@ -48,6 +48,9 @@ target_sources(PalozebraVinyl PRIVATE
 target_compile_definitions(PalozebraVinyl PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    # Palozebra Vinyl has never shipped as VST2. Disable JUCE's VST2->VST3
+    # replacement compatibility path so parameter IDs use the native VST3 scheme.
+    JUCE_VST3_CAN_REPLACE_VST2=0
 )
 
 target_link_libraries(PalozebraVinyl PRIVATE
