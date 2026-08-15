@@ -1,45 +1,68 @@
-# Palozebra // VINYL — V0.1.1 prototype
+# Palozebra // VINYL — V0.2.0 prototype
 
 A one-wheel VST3 audio effect that behaves like grabbing a spinning record.
 
 **New user? Read the DAW-independent [User Guide](USER_GUIDE.md).**
+
+## V0.2 workflow
+
+Palozebra Vinyl now supports two ways to work:
+
+### Insert mode
+
+```text
+Audio source -> Palozebra Vinyl -> Output
+```
+
+For an instrument track:
+
+```text
+MIDI -> Instrument -> Palozebra Vinyl -> Output
+```
+
+### Dedicated turntable track
+
+The plug-in exposes a second audio input bus named **Source In**. Put Vinyl on its own track/bus and route another track into that auxiliary input using your DAW's sidechain/aux-routing controls.
+
+```text
+SOURCE TRACK
+     |
+     | route / send / sidechain
+     v
+VINYL TRACK: Palozebra Vinyl / Source In
+     |
+     v
+   OUTPUT
+```
+
+The host owns the routing; the plug-in simply exposes the Source In bus. The UI reports **SOURCE IN** when that auxiliary bus is active and **INSERT MODE** otherwise.
+
+## Internal gesture recorder
+
+V0.2 adds a DAW-independent wheel-performance recorder:
+
+- **REC** starts a new gesture take.
+- **STOP REC** ends it.
+- **PLAY** replays the recorded wheel movement.
+- **STOP** stops playback.
+- **CLEAR** deletes the take.
+
+The gesture is stored as platter-speed movement and can be replayed over whatever audio is currently entering Vinyl. The current prototype keeps one take, up to about 60 seconds, in memory.
+
+`Wheel Speed` remains a published automatable parameter for users who prefer editing automation in the DAW. Optional MIDI CC74 output also remains available, but neither automation nor MIDI is required for basic internal gesture recording.
 
 ## Interaction
 
 - **Released:** platter runs at `1.0x`.
 - **Mouse down / hold:** grabs the record and drives speed to `0`.
 - **Drag clockwise / counter-clockwise:** playback speed follows angular hand velocity, including reverse.
-- **Release:** the motor returns to `1.0x` and playback continues from the point where the virtual record was left. It does not auto-fast-forward to catch the DAW timeline.
-- **Automation:** `Wheel Speed` is a published plug-in parameter intended to record and replay scratch gestures in any DAW that supports plug-in automation.
-- **Optional MIDI:** emits CC74 (channel 1) mapped from `-4x..+4x` to `0..127`. This is experimental/secondary; host automation is the intended recording path.
+- **Release:** the motor returns to `1.0x` and playback continues from the virtual record position. It does not auto-fast-forward to catch the DAW timeline.
 
 ## Signal model
 
-`Audio input -> circular history buffer -> variable-speed read head -> cubic interpolation -> output`
+`Selected audio input -> circular history buffer -> variable-speed read head -> cubic interpolation -> output`
 
-Pitch and time stay coupled, like physical vinyl. There is deliberately no time-stretch, crackle, vinyl EQ, or cosmetic "lo-fi" processing in V0.1.x.
-
-## Recording model
-
-The core workflow is DAW-independent:
-
-```text
-Audio source -> Palozebra Vinyl -> Output
-                    ↑
-            Wheel Speed automation
-```
-
-For a MIDI instrument:
-
-```text
-MIDI -> Instrument -> Palozebra Vinyl -> Output
-                           ↑
-                   Wheel Speed automation
-```
-
-The scratch performance is normally recorded as **plug-in automation**, not as MIDI. Once the performance is right, the processed result can optionally be rendered/bounced/resampled to audio.
-
-See [USER_GUIDE.md](USER_GUIDE.md) for the full explanation.
+Pitch and time stay coupled, like physical vinyl. There is deliberately no time-stretch, crackle, vinyl EQ, or cosmetic "lo-fi" processing.
 
 ## Build prerequisites
 
@@ -67,19 +90,24 @@ On Windows, install the **whole `.vst3` bundle** in a VST3 location scanned by y
 
 Do not copy only the inner binary from `Contents/x86_64-win`.
 
-## V0.1.1 known tradeoffs
+## V0.2 known tradeoffs
 
-- ~750 ms nominal history latency gives room for reverse/forward manipulation. This is intentional but too high for some live-performance uses.
+- ~750 ms nominal history latency gives room for reverse/forward manipulation.
 - After a scratch, playback continues from the virtual record position rather than silently catching up to the DAW timeline.
 - Drag sensitivity currently maps one mouse revolution/second to 1x platter speed.
 - No oversampling/de-click stage yet beyond speed smoothing + cubic interpolation.
-- Optional MIDI CC74 output is experimental and secondary to automation.
+- One internal gesture take, maximum about 60 seconds.
+- The internal gesture is not yet serialized into the DAW project state; unloading the plug-in clears it.
+- Audio printing still uses the DAW's normal render/bounce/resample/record-output workflow.
+- Source routing terminology and controls differ by DAW because the host controls plug-in buses.
 
-## V0.2 candidates after listening
+## Next candidates
 
-- Explicit **Sync / Return to Live** gesture with a short crossfade instead of audible catch-up.
+- Persist/compress gesture takes in plug-in state.
+- Multiple gesture takes / slots.
+- Explicit **Sync / Return to Live** gesture with a short crossfade.
 - Low-latency / long-buffer mode switch.
-- Adjustable platter inertia/torque hidden in an advanced panel.
+- Adjustable platter inertia/torque.
 - Better transient-safe de-clicking at extreme direction changes.
-- Optional internal gesture recorder/export, if host automation is not enough.
+- Internal audio capture/export if it proves useful across hosts.
 - Hardware-controller learn / dedicated MIDI input control.
