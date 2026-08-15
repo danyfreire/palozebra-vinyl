@@ -1,10 +1,14 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <array>
+#include <algorithm>
+
 PalozebraVinylAudioProcessor::PalozebraVinylAudioProcessor()
     : AudioProcessor(BusesProperties()
         .withInput("Input", juce::AudioChannelSet::stereo(), true)
-        .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+        .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+        .withInput("Source In", juce::AudioChannelSet::stereo(), false)),
       parameters(*this, nullptr, "PARAMETERS", createParameterLayout())
 {
     speedParam = parameters.getRawParameterValue(speedParamId);
@@ -15,7 +19,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout PalozebraVinylAudioProcessor
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    // Skew around 1x so the useful scratch range has more resolution near stop/normal speed.
     juce::NormalisableRange<float> speedRange(-4.0f, 4.0f, 0.0001f);
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ speedParamId, 1 }, "Wheel Speed", speedRange, 1.0f,
@@ -31,46 +34,208 @@ juce::AudioProcessorValueTreeState::ParameterLayout PalozebraVinylAudioProcessor
     return layout;
 }
 
-void PalozebraVinylAudioProcessor::prepareToPlay(double sampleRate, int)
+void PalozebraVinylAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    engine.prepare(sampleRate, getTotalNumInputChannels(), 8.0);
+    currentSampleRate = juce::jmax(1.0, sampleRate);
+
+    // The scratch engine processes the selected source bus, which is constrained to match
+    // the mono/stereo main output layout.
+    engine.prepare(currentSampleRate, juce::jmax(1, getMainBusNumOutputChannels()), 8.0);
     setLatencySamples(static_cast<int>(engine.getLatencySamples()));
+
+    const auto maxGestureSamples = static_cast<std::size_t>(std::ceil(currentSampleRate * maxGestureSeconds));
+    gestureBuffer.assign(maxGestureSamples, 1.0f);
+
+    // Hosts may occasionally deliver blocks larger than the estimate passed here. Reserve
+    // a generous scratch curve up-front and grow only if an unusual host requires it.
+    const auto scratchSize = static_cast<std::size_t>(juce::jmax(samplesPerBlock, 65536));
+    speedCurveScratch.assign(scratchSize, 1.0f);
+
+    clearGesture();
+    effectiveSpeed.store(1.0f);
+    sourceLevel.store(0.0f);
 }
 
 bool PalozebraVinylAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    const auto in = layouts.getMainInputChannelSet();
+    const auto mainIn = layouts.getMainInputChannelSet();
     const auto out = layouts.getMainOutputChannelSet();
-    return in == out && (out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo());
+
+    if (mainIn.isDisabled() || out.isDisabled())
+        return false;
+
+    if (out != juce::AudioChannelSet::mono() && out != juce::AudioChannelSet::stereo())
+        return false;
+
+    if (mainIn != out)
+        return false;
+
+    if (layouts.inputBuses.size() > 1)
+    {
+        const auto sourceIn = layouts.getChannelSet(true, 1);
+        if (!sourceIn.isDisabled() && sourceIn != out)
+            return false;
+    }
+
+    return true;
+}
+
+void PalozebraVinylAudioProcessor::startGestureRecording() noexcept
+{
+    gesturePlaying.store(false);
+    gestureRecording.store(false);
+    gesturePosition.store(0);
+    gestureLength.store(0);
+    gestureRecording.store(true);
+}
+
+void PalozebraVinylAudioProcessor::stopGestureRecording() noexcept
+{
+    gestureRecording.store(false);
+}
+
+void PalozebraVinylAudioProcessor::startGesturePlayback() noexcept
+{
+    if (!hasGesture())
+        return;
+
+    gestureRecording.store(false);
+    gesturePlaying.store(false);
+    gesturePosition.store(0);
+    gesturePlaying.store(true);
+}
+
+void PalozebraVinylAudioProcessor::stopGesturePlayback() noexcept
+{
+    gesturePlaying.store(false);
+    gesturePosition.store(0);
+}
+
+void PalozebraVinylAudioProcessor::clearGesture() noexcept
+{
+    gestureRecording.store(false);
+    gesturePlaying.store(false);
+    gesturePosition.store(0);
+    gestureLength.store(0);
+}
+
+double PalozebraVinylAudioProcessor::getGestureLengthSeconds() const noexcept
+{
+    return static_cast<double>(gestureLength.load()) / juce::jmax(1.0, currentSampleRate);
 }
 
 void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
 
-    const auto numIn = getTotalNumInputChannels();
-    const auto numOut = getTotalNumOutputChannels();
-    for (auto ch = numIn; ch < numOut; ++ch)
-        buffer.clear(ch, 0, buffer.getNumSamples());
+    auto mainInput = getBusBuffer(buffer, true, 0);
+    auto output = getBusBuffer(buffer, false, 0);
 
-    const float speed = speedParam != nullptr ? speedParam->load() : 1.0f;
-    engine.setTargetSpeed(speed);
+    const bool sourceBusEnabled = getBusCount(true) > 1
+        && getBus(true, 1) != nullptr
+        && getBus(true, 1)->isEnabled();
+
+    auto selectedInput = mainInput;
+    if (sourceBusEnabled)
+    {
+        auto sourceInput = getBusBuffer(buffer, true, 1);
+        if (sourceInput.getNumChannels() == output.getNumChannels())
+            selectedInput = sourceInput;
+    }
+
+    const bool usingAux = sourceBusEnabled && selectedInput.getNumChannels() == output.getNumChannels();
+    usingSourceInput.store(usingAux);
+
+    float peak = 0.0f;
+    for (int ch = 0; ch < selectedInput.getNumChannels(); ++ch)
+        peak = juce::jmax(peak, selectedInput.getMagnitude(ch, 0, selectedInput.getNumSamples()));
+    sourceLevel.store(peak);
+
+    const int numSamples = output.getNumSamples();
+    const int channels = juce::jmin({ 2, selectedInput.getNumChannels(), output.getNumChannels() });
+
+    if (channels <= 0 || numSamples <= 0)
+    {
+        output.clear();
+        return;
+    }
+
+    if (speedCurveScratch.size() < static_cast<std::size_t>(numSamples))
+        speedCurveScratch.resize(static_cast<std::size_t>(numSamples), 1.0f);
+
+    const bool playing = gesturePlaying.load();
+    const bool recording = gestureRecording.load();
+    bool useSpeedCurve = false;
+    float commandedSpeed = speedParam != nullptr ? speedParam->load() : 1.0f;
+
+    if (playing)
+    {
+        useSpeedCurve = true;
+        auto position = gesturePosition.load();
+        const auto length = gestureLength.load();
+
+        for (int sample = 0; sample < numSamples; ++sample)
+        {
+            if (position < length)
+            {
+                speedCurveScratch[static_cast<std::size_t>(sample)] = gestureBuffer[position++];
+            }
+            else
+            {
+                // A take ends on normal platter speed. There is no automatic catch-up.
+                speedCurveScratch[static_cast<std::size_t>(sample)] = 1.0f;
+                gesturePlaying.store(false);
+            }
+        }
+
+        gesturePosition.store(position);
+        commandedSpeed = speedCurveScratch[static_cast<std::size_t>(numSamples - 1)];
+    }
+    else if (recording)
+    {
+        useSpeedCurve = true;
+        auto length = gestureLength.load();
+
+        for (int sample = 0; sample < numSamples; ++sample)
+        {
+            const float liveSpeed = speedParam != nullptr ? speedParam->load() : 1.0f;
+            speedCurveScratch[static_cast<std::size_t>(sample)] = liveSpeed;
+
+            if (length < gestureBuffer.size())
+                gestureBuffer[length++] = liveSpeed;
+            else
+                gestureRecording.store(false);
+        }
+
+        gestureLength.store(length);
+        commandedSpeed = speedCurveScratch[static_cast<std::size_t>(numSamples - 1)];
+    }
+    else
+    {
+        engine.setTargetSpeed(commandedSpeed);
+    }
 
     std::array<const float*, 2> inputs{};
     std::array<float*, 2> outputs{};
-    const int channels = juce::jmin(2, buffer.getNumChannels());
     for (int ch = 0; ch < channels; ++ch)
     {
-        inputs[static_cast<std::size_t>(ch)] = buffer.getReadPointer(ch);
-        outputs[static_cast<std::size_t>(ch)] = buffer.getWritePointer(ch);
+        inputs[static_cast<std::size_t>(ch)] = selectedInput.getReadPointer(ch);
+        outputs[static_cast<std::size_t>(ch)] = output.getWritePointer(ch);
     }
 
-    engine.process(inputs.data(), outputs.data(), channels, buffer.getNumSamples());
+    engine.process(inputs.data(),
+                   outputs.data(),
+                   channels,
+                   numSamples,
+                   useSpeedCurve ? speedCurveScratch.data() : nullptr);
 
-    // Optional gesture telemetry as CC74. This is deliberately secondary to host automation.
+    effectiveSpeed.store(static_cast<float>(engine.getCurrentSpeed()));
+
+    // Optional telemetry as CC74 remains secondary; the internal gesture recorder no longer
+    // depends on MIDI or host automation.
     if (midiOutParam != nullptr && midiOutParam->load() > 0.5f)
     {
-        const auto normalised = juce::jlimit(0.0f, 1.0f, (speed + 4.0f) / 8.0f);
+        const auto normalised = juce::jlimit(0.0f, 1.0f, (commandedSpeed + 4.0f) / 8.0f);
         const int ccValue = juce::jlimit(0, 127, juce::roundToInt(normalised * 127.0f));
         if (ccValue != lastMidiValue)
         {
