@@ -44,7 +44,13 @@ public:
     std::size_t getLatencySamples() const noexcept { return baseDelaySamples; }
 
     // inputs/outputs are arrays of channel pointers. In-place operation is supported.
-    void process(const float* const* inputs, float* const* outputs, int numChannels, int numSamples)
+    // If speedCurve is supplied, each sample becomes the platter target speed for that frame.
+    // This lets the plug-in replay a recorded wheel gesture sample-accurately.
+    void process(const float* const* inputs,
+                 float* const* outputs,
+                 int numChannels,
+                 int numSamples,
+                 const float* speedCurve = nullptr)
     {
         if (!prepared || numSamples <= 0)
             return;
@@ -53,6 +59,9 @@ public:
 
         for (int sample = 0; sample < numSamples; ++sample)
         {
+            if (speedCurve != nullptr)
+                targetSpeed = std::clamp(static_cast<double>(speedCurve[sample]), -4.0, 4.0);
+
             // Smooth abrupt GUI/automation steps to avoid zipper clicks without killing scratch attack.
             const double smoothing = 1.0 - std::exp(-1.0 / (sampleRate * 0.0015));
             currentSpeed += (targetSpeed - currentSpeed) * smoothing;
@@ -65,10 +74,8 @@ public:
             for (int ch = 0; ch < chCount; ++ch)
                 outputs[ch][sample] = readCubic(ch, readPos);
 
-            // The platter moves only at the requested physical speed. In particular, when
-            // the user releases the wheel and targetSpeed returns to 1x, we do NOT speed up
-            // behind the scenes to catch the DAW timeline. That audible fast-forward was
-            // unnatural for a turntable. A future explicit sync gesture can return to live.
+            // The platter moves only at the requested physical speed. When released at 1x,
+            // it does not fast-forward to catch the DAW timeline.
             readPos = wrap(readPos + currentSpeed);
             writePos = (writePos + 1) % bufferSize;
         }
