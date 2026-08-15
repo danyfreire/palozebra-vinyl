@@ -19,7 +19,6 @@ int main()
     engine.setTargetSpeed(1.0);
     engine.process(inPtrs, outPtrs, 1, n);
 
-    // Output should be finite and non-silent once the pre-delay fills.
     double energy = 0.0;
     for (float s : output)
     {
@@ -36,6 +35,16 @@ int main()
     engine.setTargetSpeed(2.0);
     engine.process(inPtrs, outPtrs, 1, n / 4);
 
+    for (int i = 0; i < n / 4; ++i)
+        assert(std::isfinite(output[i]));
+
+    // A recorded gesture curve can drive speed sample-by-sample.
+    std::vector<float> gesture(n / 4, 1.0f);
+    for (int i = 0; i < n / 16; ++i) gesture[static_cast<std::size_t>(i)] = 0.0f;
+    for (int i = n / 16; i < n / 8; ++i) gesture[static_cast<std::size_t>(i)] = -1.0f;
+    for (int i = n / 8; i < 3 * n / 16; ++i) gesture[static_cast<std::size_t>(i)] = 2.0f;
+
+    engine.process(inPtrs, outPtrs, 1, n / 4, gesture.data());
     for (int i = 0; i < n / 4; ++i)
         assert(std::isfinite(output[i]));
 
