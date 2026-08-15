@@ -2,217 +2,189 @@
 
 Palozebra Vinyl is a VST3 audio effect that lets you grab incoming audio as if it were a spinning record.
 
-The most important idea is simple:
+## The basic idea
 
-> **You normally record the scratch as plug-in automation, not as MIDI and not directly as a new audio file.**
+You have two ways to use it:
 
-The exact buttons have different names in each DAW, but the workflow is the same.
+### 1. Insert mode
+
+Put Vinyl directly after the sound source.
+
+```text
+AUDIO → PALOZEBRA VINYL → OUTPUT
+```
+
+or:
+
+```text
+MIDI → INSTRUMENT → PALOZEBRA VINYL → OUTPUT
+```
+
+### 2. Turntable / Source In mode
+
+Put Palozebra Vinyl on its **own track or bus** and route another track into the plug-in's auxiliary input, named **Source In**.
+
+```text
+SOURCE TRACK
+WAV / MP3 / synth / voice / drums
+          │
+          │ route / send / sidechain
+          ▼
+VINYL TRACK
+PALOZEBRA VINYL — Source In
+          │
+          ▼
+        OUTPUT
+```
+
+Your DAW controls this routing. Depending on the host, the control may be called **Sidechain**, **Aux Input**, **Audio From**, **Input Pins**, **Route**, or something similar.
+
+When the auxiliary input is active, the plug-in interface shows **SOURCE IN**. Otherwise it shows **INSERT MODE**.
 
 ---
 
-## 1. Where do I put the plug-in?
-
-Put **Palozebra Vinyl after the sound source**.
-
-### Audio file
-
-```text
-WAV / MP3 / recorded audio
-        ↓
-Palozebra Vinyl
-        ↓
-Track output
-```
-
-### MIDI instrument
-
-```text
-MIDI notes
-   ↓
-Synth / sampler / instrument
-   ↓
-Palozebra Vinyl
-   ↓
-Track output
-```
-
-Palozebra Vinyl processes **audio**. If your track starts as MIDI, the instrument generates the audio first and Vinyl goes after it.
-
----
-
-## 2. What happens when I move the record?
+## How to scratch
 
 - **Released:** normal playback at `1.0x`.
 - **Click / hold:** grab the record and stop it under your hand.
 - **Drag:** move the audio forward or backward, including reverse.
-- **Release:** the platter returns to `1.0x` and continues from the point where you left the virtual record.
+- **Release:** the platter returns to `1.0x` and continues from the virtual record position.
 
 Pitch and speed stay linked, like a physical turntable.
 
 ---
 
-## 3. What exactly do I record?
+# Recording a scratch
 
-Palozebra Vinyl exposes a plug-in parameter called:
+From v0.2, you do **not** need to learn your DAW's automation system just to record a scratch.
 
-**Wheel Speed**
+Palozebra Vinyl has its own gesture recorder:
 
-That parameter describes the movement of the virtual record.
+- **REC** — starts a new wheel-performance take.
+- **STOP REC** — ends the take.
+- **PLAY** — replays the recorded wheel movement.
+- **STOP** — stops gesture playback.
+- **CLEAR** — deletes the current gesture take.
 
-When your DAW records automation, it stores your scratch gesture as a curve:
+The plug-in records **the movement of the virtual record**, not the source audio itself.
+
+That means you can record a scratch gesture once and replay the same movement over another sound later.
+
+Example:
 
 ```text
-Wheel Speed
+SOURCE A → Vinyl → REC gesture → scratch
 
- 1.0x ────────╲        ╱────────
-               ╲      ╱
- 0.0x           ╲____╱
-                   ╲
--1.0x               ╲___
+then change the source:
+
+SOURCE B → Vinyl → PLAY same gesture
 ```
 
-On playback, the DAW sends that movement back to Palozebra Vinyl and the plug-in repeats the scratch.
+The gesture recorder currently supports one take of up to about 60 seconds.
 
-### Therefore
-
-- **Audio/MIDI source:** remains where it already is.
-- **Scratch performance:** record `Wheel Speed` automation.
-- **Final processed sound:** optionally render/bounce/resample it to audio later.
-
-You do **not** need to record MIDI for normal use.
+> Prototype limitation: the internal gesture take is currently held in memory and is not yet saved permanently inside the DAW project when the plug-in is unloaded.
 
 ---
 
-## 4. DAW-independent recording workflow
+## So what exactly am I recording?
 
-Every major DAW has a way to write plug-in automation. The names vary, but the procedure is the same:
+There are three different things and they should not be confused:
 
-1. Put Palozebra Vinyl after your audio source or instrument.
-2. Make the plug-in parameter **Wheel Speed** available for automation.
-3. Enable your DAW's automation-write mode (`Touch`, `Latch`, `Write`, Automation Record, or equivalent).
-4. Start playback/recording.
-5. Open Palozebra Vinyl and perform the scratch with the mouse.
-6. Stop recording.
-7. Return the track to its normal automation-read mode.
-8. Play the project again: the scratch should repeat automatically.
+### A. The source
 
-The recorded automation can usually be edited like any other envelope or automation lane.
+Your WAV, MP3, recorded audio, synth, sampler, etc.
 
----
+### B. The scratch gesture
 
-## 5. Do I need another track?
+The movement of the Vinyl wheel.
 
-### To perform and edit the scratch: **No**
+Use **REC** inside Palozebra Vinyl to capture this.
 
-The simplest setup is one track:
+### C. The final processed audio
 
-```text
-SOURCE → PALOZEBRA VINYL → OUTPUT
-              ↑
-       Wheel Speed automation
-```
+If you want a permanent WAV/audio clip containing the scratch, use your DAW's normal audio-printing workflow after the performance is ready.
 
-### To create a permanent audio file: **Maybe**
+Depending on the DAW this may be called:
 
-Once the scratch is right, use your DAW's normal method to print processed audio. Depending on the DAW this may be called:
-
+- Record Output
 - Render
 - Bounce
-- Freeze / Flatten
 - Resample
-- Record track output
+- Freeze / Flatten
 - Print FX
 
 Conceptually:
 
 ```text
-SOURCE → PALOZEBRA VINYL
+SOURCE → PALOZEBRA VINYL → PROCESSED AUDIO
               ↑
-         automation
-              ↓
-        processed audio
-              ↓
-        NEW AUDIO FILE
+       recorded gesture
 ```
 
-This final audio file contains the scratch exactly as heard.
-
----
-
-## 6. Audio track vs MIDI track
-
-The workflow is the same.
-
-### Audio track
+Then:
 
 ```text
-Audio clip → Vinyl
+PROCESSED AUDIO → render / record output → NEW AUDIO FILE
 ```
 
-### MIDI track
+Palozebra Vinyl does not need to know whether the host calls a track “audio”, “MIDI”, “instrument”, or something else.
+
+---
+
+## What about MIDI?
+
+MIDI is not required for normal scratch recording.
+
+If the source begins as MIDI:
 
 ```text
-MIDI → Instrument → Vinyl
+MIDI → synth / sampler → audio → Palozebra Vinyl
 ```
 
-The scratch itself is still recorded as **Wheel Speed automation** in both cases.
+Palozebra Vinyl scratches the resulting **audio**.
+
+The optional **MIDI CC** switch emits CC74 from wheel movement. This remains an experimental secondary feature for routing/control; it is not the main recording workflow.
 
 ---
 
-## 7. What is the MIDI CC option?
+## What about DAW automation?
 
-Palozebra Vinyl can optionally emit MIDI CC74 based on wheel movement.
+`Wheel Speed` is still exposed as an automatable plug-in parameter.
 
-This is an experimental/secondary feature for routing gestures to other devices or tracks. It is **not required to record a scratch**.
+Advanced users can therefore record/edit the wheel through the host's automation system if they prefer. This is useful for precise editing, but it is no longer required for the basic workflow.
 
-For normal use, prefer your DAW's plug-in automation.
+```text
+Simple use:      REC button inside Vinyl
+Advanced use:    DAW automation of Wheel Speed
+Final audio:     render / bounce / record output in the DAW
+```
 
 ---
 
-## 8. The shortest possible version
+# Quick start
+
+## Insert mode
 
 ```text
 1. Put Vinyl after the sound.
-2. Record automation for Wheel Speed.
-3. Scratch with the mouse.
-4. Play back the automation.
-5. Bounce/render to audio only when you want a permanent audio file.
+2. Press REC in Vinyl.
+3. Move the record.
+4. Press STOP REC.
+5. Press PLAY to replay the gesture.
+6. Render/record output only if you want a permanent audio file.
 ```
 
----
-
-# Guía rápida en español
-
-La idea principal es esta:
-
-> **Normalmente grabas el scratch como automatización del parámetro `Wheel Speed`; no como MIDI ni directamente como un archivo de audio nuevo.**
-
-El flujo es igual en cualquier DAW:
+## Dedicated Vinyl track
 
 ```text
-FUENTE DE AUDIO
-      ↓
-PALOZEBRA VINYL
-      ↑
-Automatización de Wheel Speed
-      ↓
-SALIDA
+1. Put Palozebra Vinyl on an empty track/bus.
+2. Route the source track to Vinyl's Source In / sidechain input.
+3. Confirm that Vinyl shows SOURCE IN and signal.
+4. Press REC.
+5. Scratch the animated record.
+6. Press STOP REC.
+7. Press PLAY to replay the gesture over the incoming source.
+8. Render/record the output when you want audio printed to a file/clip.
 ```
 
-Si la fuente es MIDI:
-
-```text
-MIDI → instrumento/synth → Palozebra Vinyl → salida
-```
-
-Para grabar tu interpretación:
-
-1. Activa la automatización del parámetro **Wheel Speed**.
-2. Pon el DAW en modo de escritura de automatización (`Touch`, `Latch`, `Write` o equivalente).
-3. Reproduce/graba y mueve el disco con el mouse.
-4. El DAW guarda esos movimientos como una curva de automatización.
-5. Al reproducir nuevamente, Palozebra Vinyl repite el scratch.
-
-Cuando ya te guste el resultado, puedes convertirlo en audio usando el método normal de tu DAW: **Render, Bounce, Resample, Freeze/Flatten, Record Output**, etc.
-
-El MIDI CC74 es opcional y experimental; no hace falta para el uso normal del plug-in.
+This concept is the same in every DAW; only the host's routing and render/record-output button names change.
