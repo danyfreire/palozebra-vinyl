@@ -34,7 +34,6 @@ void VinylWheel::mouseDown(const juce::MouseEvent& e)
     if (speedParameter == nullptr)
         return;
 
-    // Touching the platter always takes manual control away from a replaying take.
     processor.stopGesturePlayback();
 
     dragging = true;
@@ -57,7 +56,6 @@ void VinylWheel::mouseDrag(const juce::MouseEvent& e)
     while (delta > juce::MathConstants<float>::pi) delta -= juce::MathConstants<float>::twoPi;
     while (delta < -juce::MathConstants<float>::pi) delta += juce::MathConstants<float>::twoPi;
 
-    // One full revolution per second = 1x.
     const float revolutionsPerSecond = delta / juce::MathConstants<float>::twoPi / static_cast<float>(dt);
     setSpeedFromGesture(revolutionsPerSecond);
 
@@ -213,8 +211,8 @@ void PalozebraVinylAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.setColour(juce::Colours::white.withAlpha(0.58f));
     g.setFont(juce::FontOptions(12.5f));
-    g.drawText("route source → REC → scratch → PLAY", 20, 552, getWidth() - 40, 22,
-               juce::Justification::centred);
+    const juce::String footer = juce::String("route source → REC → scratch → PLAY · v") + JucePlugin_VersionString;
+    g.drawText(footer, 20, 552, getWidth() - 40, 22, juce::Justification::centred);
 }
 
 void PalozebraVinylAudioProcessorEditor::resized()
