@@ -151,9 +151,13 @@ PalozebraVinylAudioProcessorEditor::PalozebraVinylAudioProcessorEditor(Palozebra
     addAndMakeVisible(recordButton);
     addAndMakeVisible(clearButton);
     addAndMakeVisible(takeLabel);
+    addAndMakeVisible(websiteLink);
 
     takeLabel.setJustificationType(juce::Justification::centred);
     takeLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.72f));
+
+    websiteLink.setColour(juce::HyperlinkButton::textColourId, juce::Colours::white.withAlpha(0.42f));
+    websiteLink.setFont(juce::FontOptions(11.0f), false, juce::Justification::centredRight);
 
     recordButton.onClick = [this]
     {
@@ -205,22 +209,22 @@ void PalozebraVinylAudioProcessorEditor::refreshTransportUi()
 
     if (recording)
     {
-        takeLabel.setText("RECORDING  ·  " + formatTimelineTime(processor.getGestureStartSeconds()),
+        takeLabel.setText("RECORDING | " + formatTimelineTime(processor.getGestureStartSeconds()),
                           juce::dontSendNotification);
     }
     else if (armed)
     {
         if (processor.isHostPlaying() && processor.hasHostTimeline())
-            takeLabel.setText("REC ARMED  ·  TOUCH THE RECORD", juce::dontSendNotification);
+            takeLabel.setText("REC ARMED | TOUCH THE RECORD", juce::dontSendNotification);
         else
-            takeLabel.setText("REC ARMED  ·  START DAW PLAYBACK", juce::dontSendNotification);
+            takeLabel.setText("REC ARMED | START DAW PLAYBACK", juce::dontSendNotification);
     }
     else if (hasTake)
     {
-        juce::String text = "TAKE 01  ·  " + formatTimelineTime(processor.getGestureStartSeconds())
-                          + "  ·  " + juce::String(processor.getGestureLengthSeconds(), 2) + " s";
+        juce::String text = "TAKE 01 | " + formatTimelineTime(processor.getGestureStartSeconds())
+                          + " | " + juce::String(processor.getGestureLengthSeconds(), 2) + " s";
         if (active)
-            text += "  ·  PLAYING";
+            text += " | PLAYING";
         takeLabel.setText(text, juce::dontSendNotification);
     }
     else
@@ -241,10 +245,10 @@ void PalozebraVinylAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawLine(24.0f, 438.0f, static_cast<float>(getWidth() - 24), 438.0f, 1.0f);
 
     g.setColour(juce::Colours::white.withAlpha(0.55f));
-    g.setFont(juce::FontOptions(12.0f));
-    const juce::String footer = juce::String("REC arm → touch platter → replay in place  ·  v")
+    g.setFont(juce::FontOptions(11.0f));
+    const juce::String footer = juce::String("REC arm > touch platter > replay in place | v")
                               + JucePlugin_VersionString;
-    g.drawText(footer, 15, 515, getWidth() - 30, 20, juce::Justification::centred);
+    g.drawText(footer, 15, 515, 300, 20, juce::Justification::centredLeft);
 }
 
 void PalozebraVinylAudioProcessorEditor::resized()
@@ -254,4 +258,5 @@ void PalozebraVinylAudioProcessorEditor::resized()
 
     recordButton.setBounds(100, 480, 118, 36);
     clearButton.setBounds(226, 480, 114, 36);
+    websiteLink.setBounds(324, 515, 101, 20);
 }
