@@ -1,6 +1,8 @@
-# Palozebra // VINYL — V0.4.0 prototype
+# Palozebra // VINYL — v0.4.1
 
 A one-wheel VST3 audio effect that behaves like grabbing a spinning record.
+
+**Download the current Windows x64 VST3 from [Latest Release](https://github.com/danyfreire/palozebra-vinyl/releases/latest).**
 
 **New user? Read the DAW-independent [User Guide](USER_GUIDE.md).**
 
