@@ -43,13 +43,20 @@ void PalozebraVinylAudioProcessor::prepareToPlay(double sampleRate, int samplesP
     if (speedCurveScratch.size() < wantedScratch)
         speedCurveScratch.resize(wantedScratch, 1.0f);
 
-    // Keep any gesture restored from the DAW project, but never resume a transient transport state.
+    // Keep a placed take restored from the project, but never resume transient transport states.
+    gestureArmed.store(false);
+    gestureStartPending.store(false);
     gestureRecording.store(false);
-    gesturePlaying.store(false);
-    gesturePlayPosition.store(0.0);
+    timelineGestureActive.store(false);
+    manualWheelTouch.store(false);
     gestureRecordPhase.store(1.0);
     releaseActive.store(false);
     effectiveSpeed.store(1.0f);
+    hostPlaying.store(false);
+    hostTimelineAvailable.store(false);
+    lastTimelineSeconds = 0.0;
+    lastTimelineBlockSamples = 0;
+    lastTimelineValid = false;
 }
 
 bool PalozebraVinylAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -59,44 +66,45 @@ bool PalozebraVinylAudioProcessor::isBusesLayoutSupported(const BusesLayout& lay
     return in == out && (out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo());
 }
 
-void PalozebraVinylAudioProcessor::startGestureRecording() noexcept
+void PalozebraVinylAudioProcessor::armGestureRecording() noexcept
 {
-    gesturePlaying.store(false);
-    gesturePlayPosition.store(0.0);
-    gestureLength.store(0);
-    gestureRecordPhase.store(1.0); // capture the very first audio sample as the first gesture point
-    gestureRecording.store(true);
+    gestureRecording.store(false);
+    gestureStartPending.store(false);
+    gestureArmed.store(true);
+    timelineGestureActive.store(false);
 }
 
 void PalozebraVinylAudioProcessor::stopGestureRecording() noexcept
 {
+    gestureArmed.store(false);
+    gestureStartPending.store(false);
     gestureRecording.store(false);
-}
-
-void PalozebraVinylAudioProcessor::startGesturePlayback() noexcept
-{
-    if (!hasGesture())
-        return;
-
-    gestureRecording.store(false);
-    cancelWheelRelease();
-    gesturePlayPosition.store(0.0);
-    gesturePlaying.store(true);
-}
-
-void PalozebraVinylAudioProcessor::stopGesturePlayback() noexcept
-{
-    gesturePlaying.store(false);
-    gesturePlayPosition.store(0.0);
-    beginWheelRelease();
 }
 
 void PalozebraVinylAudioProcessor::clearGesture() noexcept
 {
+    gestureArmed.store(false);
+    gestureStartPending.store(false);
     gestureRecording.store(false);
-    gesturePlaying.store(false);
-    gesturePlayPosition.store(0.0);
+    timelineGestureActive.store(false);
     gestureLength.store(0);
+    gestureStartSeconds.store(0.0);
+    gestureStartValid.store(false);
+}
+
+void PalozebraVinylAudioProcessor::beginManualWheelTouch() noexcept
+{
+    manualWheelTouch.store(true);
+    cancelWheelRelease();
+
+    // REC is an arm button. The first actual platter touch requests timeline placement.
+    if (gestureArmed.load())
+        gestureStartPending.store(true);
+}
+
+void PalozebraVinylAudioProcessor::endManualWheelTouch() noexcept
+{
+    manualWheelTouch.store(false);
 }
 
 double PalozebraVinylAudioProcessor::getGestureLengthSeconds() const noexcept
@@ -144,16 +152,99 @@ void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     if (channels <= 0 || numSamples <= 0)
         return;
 
-    // Normal hosts stay well below this. Grow only for an unusually large offline block.
     if (speedCurveScratch.size() < static_cast<std::size_t>(numSamples))
         speedCurveScratch.resize(static_cast<std::size_t>(numSamples), 1.0f);
 
-    const bool playing = gesturePlaying.load();
+    // Read the host timeline for this callback. Seconds are preferred because the saved take
+    // remains meaningful if the project is reopened at another sample rate.
+    bool timelineValid = false;
+    bool transportPlaying = false;
+    double blockStartSeconds = 0.0;
+
+    if (auto* playHead = getPlayHead())
+    {
+        if (const auto position = playHead->getPosition())
+        {
+            transportPlaying = position->getIsPlaying();
+
+            if (const auto seconds = position->getTimeInSeconds())
+            {
+                blockStartSeconds = *seconds;
+                timelineValid = true;
+            }
+            else if (const auto samples = position->getTimeInSamples())
+            {
+                blockStartSeconds = static_cast<double>(*samples) / currentSampleRate;
+                timelineValid = true;
+            }
+        }
+    }
+
+    hostPlaying.store(transportPlaying);
+    hostTimelineAvailable.store(timelineValid);
+
+    // A host seek/rewind/loop is an explicit timeline jump. Re-align the record there so a
+    // recorded scratch manipulates the same source material on every pass. Normal wheel release
+    // still never catches up automatically.
+    if (timelineValid && transportPlaying)
+    {
+        bool transportJump = !lastTimelineValid;
+
+        if (lastTimelineValid)
+        {
+            const double expected = lastTimelineSeconds
+                                  + static_cast<double>(lastTimelineBlockSamples) / currentSampleRate;
+            const double blockSeconds = static_cast<double>(juce::jmax(lastTimelineBlockSamples, numSamples))
+                                      / currentSampleRate;
+            const double tolerance = juce::jmax(0.020, blockSeconds * 4.0);
+            transportJump = std::abs(blockStartSeconds - expected) > tolerance;
+        }
+
+        if (transportJump)
+        {
+            engine.syncToLive();
+            releaseActive.store(false);
+            timelineGestureActive.store(false);
+        }
+
+        lastTimelineSeconds = blockStartSeconds;
+        lastTimelineBlockSamples = numSamples;
+        lastTimelineValid = true;
+    }
+    else
+    {
+        lastTimelineValid = false;
+    }
+
+    // REC is only armed until the first platter touch. The audio thread places the take at the
+    // beginning of the first block that actually sees that touch while the host is playing.
+    const bool touchingNow = manualWheelTouch.load();
+    if (gestureStartPending.load() && gestureArmed.load())
+    {
+        if (touchingNow && timelineValid && transportPlaying)
+        {
+            gestureLength.store(0);
+            gestureRecordPhase.store(1.0);
+            gestureStartSeconds.store(blockStartSeconds);
+            gestureStartValid.store(true);
+            gestureRecording.store(true);
+            gestureArmed.store(false);
+            gestureStartPending.store(false);
+        }
+        else if (!touchingNow)
+        {
+            // A touch while the host was stopped/unavailable must not place itself later by accident.
+            gestureStartPending.store(false);
+        }
+    }
+
     const bool recording = gestureRecording.load();
+    const bool armed = gestureArmed.load();
     const auto gestureCount = gestureLength.load();
+    const bool placedTake = gestureStartValid.load() && gestureCount > 0;
+    const double takeStartSeconds = gestureStartSeconds.load();
     const double gestureStep = static_cast<double>(gestureRateHz) / currentSampleRate;
 
-    double playPosition = gesturePlayPosition.load();
     double recordPhase = gestureRecordPhase.load();
     std::size_t recordLength = gestureLength.load();
 
@@ -164,25 +255,45 @@ void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
 
     const float liveParameterSpeed = speedParam != nullptr ? speedParam->load() : 1.0f;
 
+    // Existing takes stay quiet while REC is armed, so the user can replace a take without the
+    // old scratch firing underneath the new performance.
+    const bool allowTimelineTake = !recording
+                                && !armed
+                                && !touchingNow
+                                && placedTake
+                                && timelineValid
+                                && transportPlaying;
+
+    bool anyTimelineSample = false;
+
     for (int sample = 0; sample < numSamples; ++sample)
     {
         float commandedSpeed = liveParameterSpeed;
+        bool timelineOwnsSample = false;
 
-        if (playing)
+        if (allowTimelineTake)
         {
-            if (gestureCount == 0 || playPosition >= static_cast<double>(gestureCount))
+            const double absoluteSeconds = blockStartSeconds
+                                         + static_cast<double>(sample) / currentSampleRate;
+            const double localPoint = (absoluteSeconds - takeStartSeconds)
+                                    * static_cast<double>(gestureRateHz);
+
+            if (localPoint >= 0.0 && localPoint < static_cast<double>(gestureCount))
             {
-                commandedSpeed = 1.0f;
-                gesturePlaying.store(false);
-            }
-            else
-            {
-                const auto i0 = static_cast<std::size_t>(std::floor(playPosition));
+                const auto i0 = static_cast<std::size_t>(std::floor(localPoint));
                 const auto i1 = juce::jmin(i0 + 1, gestureCount - 1);
-                const float frac = static_cast<float>(playPosition - std::floor(playPosition));
+                const float frac = static_cast<float>(localPoint - std::floor(localPoint));
                 commandedSpeed = gestureBuffer[i0] + (gestureBuffer[i1] - gestureBuffer[i0]) * frac;
-                playPosition += gestureStep;
+                timelineOwnsSample = true;
+                anyTimelineSample = true;
             }
+        }
+
+        if (timelineOwnsSample)
+        {
+            // Timeline playback is deterministic and supersedes a stale manual-release envelope.
+            releasing = false;
+            releaseActive.store(false);
         }
         else if (releasing)
         {
@@ -206,6 +317,8 @@ void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
 
         speedCurveScratch[static_cast<std::size_t>(sample)] = commandedSpeed;
 
+        // While recording, capture exactly the speed/pitch command being heard, including the
+        // short motor release after the user lets go of the platter.
         if (recording)
         {
             if (recordPhase >= 1.0)
@@ -225,7 +338,7 @@ void PalozebraVinylAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
         }
     }
 
-    gesturePlayPosition.store(playPosition);
+    timelineGestureActive.store(anyTimelineSample);
     gestureRecordPhase.store(recordPhase);
     if (recording)
         gestureLength.store(recordLength);
@@ -248,12 +361,19 @@ void PalozebraVinylAudioProcessor::getStateInformation(juce::MemoryBlock& destDa
 {
     auto state = parameters.copyState();
 
-    const auto length = juce::jmin(gestureLength.load(), gestureBuffer.size());
+    // Saving in the middle of an active gesture is intentionally ignored; once STOP REC is pressed,
+    // the placed take is stable and can be serialized safely with the project.
+    const bool stableTake = !gestureRecording.load() && gestureStartValid.load();
+    const auto length = stableTake ? juce::jmin(gestureLength.load(), gestureBuffer.size()) : 0u;
+
     state.setProperty("gestureLength", static_cast<int>(length), nullptr);
     state.setProperty("gestureRateHz", gestureRateHz, nullptr);
+    state.setProperty("gestureTimelineVersion", 1, nullptr);
 
     if (length > 0)
     {
+        state.setProperty("gestureStartSeconds", gestureStartSeconds.load(), nullptr);
+
         juce::StringArray values;
         for (std::size_t i = 0; i < length; ++i)
             values.add(juce::String(gestureBuffer[i], 5));
@@ -261,6 +381,7 @@ void PalozebraVinylAudioProcessor::getStateInformation(juce::MemoryBlock& destDa
     }
     else
     {
+        state.removeProperty("gestureStartSeconds", nullptr);
         state.removeProperty("gestureData", nullptr);
     }
 
@@ -276,16 +397,18 @@ void PalozebraVinylAudioProcessor::setStateInformation(const void* data, int siz
         if (!state.isValid())
             return;
 
+        gestureArmed.store(false);
+        gestureStartPending.store(false);
         gestureRecording.store(false);
-        gesturePlaying.store(false);
+        timelineGestureActive.store(false);
         releaseActive.store(false);
-        gesturePlayPosition.store(0.0);
 
         const int savedLength = static_cast<int>(state.getProperty("gestureLength", 0));
         const auto encoded = state.getProperty("gestureData").toString();
+        const bool hasTimelinePlacement = state.hasProperty("gestureStartSeconds");
 
         std::size_t restored = 0;
-        if (savedLength > 0 && encoded.isNotEmpty())
+        if (savedLength > 0 && encoded.isNotEmpty() && hasTimelinePlacement)
         {
             juce::StringArray values;
             values.addTokens(encoded, ",", "");
@@ -299,6 +422,10 @@ void PalozebraVinylAudioProcessor::setStateInformation(const void* data, int siz
         }
 
         gestureLength.store(restored);
+        gestureStartSeconds.store(hasTimelinePlacement
+                                    ? static_cast<double>(state.getProperty("gestureStartSeconds"))
+                                    : 0.0);
+        gestureStartValid.store(restored > 0 && hasTimelinePlacement);
         parameters.replaceState(state);
     }
 }
