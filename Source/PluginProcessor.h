@@ -93,6 +93,11 @@ private:
     std::atomic<bool> hostPlaying { false };
     std::atomic<bool> hostTimelineAvailable { false };
 
+    // Audio-thread-only continuity tracking detects explicit seek/rewind/loop jumps.
+    double lastTimelineSeconds = 0.0;
+    int lastTimelineBlockSamples = 0;
+    bool lastTimelineValid = false;
+
     // Short spin-up/spin-down envelope generated at audio rate on mouse release.
     std::atomic<bool> releaseActive { false };
     std::atomic<float> releaseStartSpeed { 1.0f };
