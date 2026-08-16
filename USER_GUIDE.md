@@ -61,41 +61,58 @@ Vinyl also does **not** fast-forward afterward to catch the original DAW timelin
 
 ---
 
-# Recording a scratch
+# Recording a scratch in place
 
-Palozebra Vinyl has its own gesture recorder:
+From v0.4, a scratch take is attached to the **DAW timeline**.
 
-- **REC** — starts a new wheel-performance take.
-- **STOP REC** — ends the take.
-- **PLAY** — replays the recorded wheel movement.
-- **STOP** — stops gesture playback.
-- **CLEAR** — deletes the current take.
+There is no separate PLAY button inside Vinyl. Once a take is recorded, normal DAW playback triggers it automatically at the place where you performed it.
 
-The important point:
-
-> **REC records your hand movement on the virtual record. It does not record a new audio file.**
-
-The gesture is sampled internally at 200 points per second and interpolated during playback.
-
-That means the same gesture can be replayed over whatever audio is passing through Vinyl at that moment.
-
----
-
-## Quick start
+### Workflow
 
 ```text
 1. Put Palozebra Vinyl on the track you want to scratch.
 2. Start playback in your DAW.
-3. Press REC inside Vinyl.
-4. Scratch the animated record.
-5. Press STOP REC.
-6. Press PLAY inside Vinyl to repeat the gesture.
-7. Press CLEAR if you want to record a different take.
+3. Press REC in Vinyl. Vinyl is now armed.
+4. Wait for the musical moment you want.
+5. Touch the virtual record. That first touch fixes TAKE 01 to this timeline position.
+6. Perform the scratch.
+7. Press STOP REC when the take is finished.
+8. Rewind the DAW and press Play normally.
+9. When the transport reaches TAKE 01, Vinyl repeats the scratch automatically.
 ```
+
+**REC records your hand movement on the virtual record. It does not create a new audio file.**
+
+The wheel movement is sampled internally at 200 points per second and interpolated during playback.
+
+The interface shows the take position and duration, for example:
+
+```text
+TAKE 01 · 00:37.420 · 1.83 s
+```
+
+If you press REC and change your mind before touching the platter, press **CANCEL**. The previous take remains intact.
+
+Press **CLEAR** to delete TAKE 01.
 
 The current prototype stores one take of up to about 60 seconds.
 
-The take is saved as part of the plug-in state, so it is intended to return when you save and reopen the DAW project.
+---
+
+## What happens when I rewind, seek, or loop?
+
+Vinyl reads the standard transport position supplied by the host.
+
+When the DAW explicitly rewinds, seeks, or loops to another position, Vinyl re-aligns its internal virtual record with that transport jump. This is different from normal wheel release:
+
+```text
+Release the wheel → short pitch bend to 1x, no automatic catch-up.
+DAW rewind/seek/loop → re-align to the new host timeline so TAKE 01 is repeatable.
+```
+
+This lets the same recorded scratch happen over the same musical material on another pass.
+
+If a host does not supply a usable timeline position to the plug-in, Vinyl cannot place an in-place take; the interface will leave REC armed rather than silently placing it at the wrong time.
 
 ---
 
@@ -108,7 +125,7 @@ ORIGINAL SOURCE
       ↓
 Palozebra Vinyl
       ↑
-   TAKE 01
+TAKE 01 @ timeline position
       ↓
 what you hear
 ```
@@ -122,6 +139,14 @@ ORIGINAL SOURCE → clean output
 So you do not need to duplicate the track just to protect the original.
 
 Duplicate only when you actually want to hear **clean + scratched** versions at the same time.
+
+---
+
+## Saving the project
+
+After STOP REC, TAKE 01 is stored in the plug-in state together with its timeline position.
+
+Saving and reopening the DAW project should therefore restore the placed take.
 
 ---
 
@@ -144,12 +169,14 @@ This part is intentionally handled by the DAW so Palozebra Vinyl behaves consist
 
 ## What about DAW automation?
 
-`Wheel Speed` remains exposed as an automatable plug-in parameter.
+`Wheel Speed` remains exposed as an automatable plug-in parameter for advanced editing.
 
-That is optional and intended for advanced editing. You do **not** need to use automation for the basic REC / PLAY workflow.
+Automation is optional. The normal v0.4 workflow is:
 
 ```text
-Simple use:   REC / PLAY inside Vinyl
-Advanced use: DAW automation of Wheel Speed
-Final audio:  render / bounce / resample in the DAW
+REC → touch platter → scratch → STOP REC
+                   ↓
+        saved at DAW timeline position
+                   ↓
+             rewind + DAW Play
 ```
