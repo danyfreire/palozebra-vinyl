@@ -1,5 +1,24 @@
 #include "PluginEditor.h"
 
+namespace
+{
+juce::String formatTimelineTime(double seconds)
+{
+    const auto totalMs = juce::jmax(0, juce::roundToInt(seconds * 1000.0));
+    const int millis = totalMs % 1000;
+    const int totalSeconds = totalMs / 1000;
+    const int secs = totalSeconds % 60;
+    const int totalMinutes = totalSeconds / 60;
+    const int mins = totalMinutes % 60;
+    const int hours = totalMinutes / 60;
+
+    if (hours > 0)
+        return juce::String::formatted("%d:%02d:%02d.%03d", hours, mins, secs, millis);
+
+    return juce::String::formatted("%02d:%02d.%03d", mins, secs, millis);
+}
+}
+
 VinylWheel::VinylWheel(PalozebraVinylAudioProcessor& p) : processor(p)
 {
     speedParameter = processor.getParameters().getParameter(PalozebraVinylAudioProcessor::speedParamId);
@@ -10,8 +29,12 @@ VinylWheel::VinylWheel(PalozebraVinylAudioProcessor& p) : processor(p)
 VinylWheel::~VinylWheel()
 {
     stopTimer();
-    if (dragging && speedParameter != nullptr)
-        speedParameter->endChangeGesture();
+    if (dragging)
+    {
+        if (speedParameter != nullptr)
+            speedParameter->endChangeGesture();
+        processor.endManualWheelTouch();
+    }
 }
 
 float VinylWheel::angleForPoint(juce::Point<float> p) const
@@ -34,9 +57,8 @@ void VinylWheel::mouseDown(const juce::MouseEvent& e)
     if (speedParameter == nullptr)
         return;
 
-    // Touching the platter always takes manual control.
-    processor.stopGesturePlayback();
-    processor.cancelWheelRelease();
+    // Manual touch takes control. If REC is armed, this touch also places TAKE 01 on the host timeline.
+    processor.beginManualWheelTouch();
 
     dragging = true;
     speedParameter->beginChangeGesture();
@@ -70,12 +92,12 @@ void VinylWheel::mouseUp(const juce::MouseEvent&)
     if (!dragging || speedParameter == nullptr)
         return;
 
-    // Capture the platter's actual speed first, then tell the public parameter that the
-    // hand has been released. DSP performs the short motor-like pitch bend back to 1x.
+    // Release uses the short platter-motor pitch bend already established in v0.3.
     processor.beginWheelRelease();
     setSpeedFromGesture(1.0f);
     speedParameter->endChangeGesture();
     dragging = false;
+    processor.endManualWheelTouch();
 }
 
 void VinylWheel::timerCallback()
@@ -127,7 +149,6 @@ PalozebraVinylAudioProcessorEditor::PalozebraVinylAudioProcessorEditor(Palozebra
 {
     addAndMakeVisible(wheel);
     addAndMakeVisible(recordButton);
-    addAndMakeVisible(playButton);
     addAndMakeVisible(clearButton);
     addAndMakeVisible(takeLabel);
 
@@ -136,19 +157,11 @@ PalozebraVinylAudioProcessorEditor::PalozebraVinylAudioProcessorEditor(Palozebra
 
     recordButton.onClick = [this]
     {
-        if (processor.isGestureRecording())
+        if (processor.isGestureRecording() || processor.isGestureArmed())
             processor.stopGestureRecording();
         else
-            processor.startGestureRecording();
-        refreshTransportUi();
-    };
+            processor.armGestureRecording();
 
-    playButton.onClick = [this]
-    {
-        if (processor.isGesturePlaying())
-            processor.stopGesturePlayback();
-        else
-            processor.startGesturePlayback();
         refreshTransportUi();
     };
 
@@ -159,7 +172,7 @@ PalozebraVinylAudioProcessorEditor::PalozebraVinylAudioProcessorEditor(Palozebra
     };
 
     setResizable(false, false);
-    setSize(440, 555);
+    setSize(440, 545);
     startTimerHz(20);
     refreshTransportUi();
 }
@@ -176,20 +189,44 @@ void PalozebraVinylAudioProcessorEditor::timerCallback()
 
 void PalozebraVinylAudioProcessorEditor::refreshTransportUi()
 {
+    const bool armed = processor.isGestureArmed();
     const bool recording = processor.isGestureRecording();
-    const bool playing = processor.isGesturePlaying();
+    const bool active = processor.isTimelineGestureActive();
     const bool hasTake = processor.hasGesture();
 
-    recordButton.setButtonText(recording ? "STOP REC" : "REC");
-    playButton.setButtonText(playing ? "STOP" : "PLAY");
-    playButton.setEnabled(hasTake || playing);
-    clearButton.setEnabled(hasTake || recording || playing);
-
-    if (hasTake)
-        takeLabel.setText("TAKE 01  ·  " + juce::String(processor.getGestureLengthSeconds(), 2) + " s",
-                          juce::dontSendNotification);
+    if (recording)
+        recordButton.setButtonText("STOP REC");
+    else if (armed)
+        recordButton.setButtonText("CANCEL");
     else
+        recordButton.setButtonText("REC");
+
+    clearButton.setEnabled(hasTake || armed || recording);
+
+    if (recording)
+    {
+        takeLabel.setText("RECORDING  ·  " + formatTimelineTime(processor.getGestureStartSeconds()),
+                          juce::dontSendNotification);
+    }
+    else if (armed)
+    {
+        if (processor.isHostPlaying() && processor.hasHostTimeline())
+            takeLabel.setText("REC ARMED  ·  TOUCH THE RECORD", juce::dontSendNotification);
+        else
+            takeLabel.setText("REC ARMED  ·  START DAW PLAYBACK", juce::dontSendNotification);
+    }
+    else if (hasTake)
+    {
+        juce::String text = "TAKE 01  ·  " + formatTimelineTime(processor.getGestureStartSeconds())
+                          + "  ·  " + juce::String(processor.getGestureLengthSeconds(), 2) + " s";
+        if (active)
+            text += "  ·  PLAYING";
+        takeLabel.setText(text, juce::dontSendNotification);
+    }
+    else
+    {
         takeLabel.setText("NO TAKE", juce::dontSendNotification);
+    }
 }
 
 void PalozebraVinylAudioProcessorEditor::paint(juce::Graphics& g)
@@ -205,17 +242,16 @@ void PalozebraVinylAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.setColour(juce::Colours::white.withAlpha(0.55f));
     g.setFont(juce::FontOptions(12.0f));
-    const juce::String footer = juce::String("REC captures the wheel  ·  release = pitch bend  ·  v")
+    const juce::String footer = juce::String("REC arm → touch platter → replay in place  ·  v")
                               + JucePlugin_VersionString;
-    g.drawText(footer, 15, 525, getWidth() - 30, 20, juce::Justification::centred);
+    g.drawText(footer, 15, 515, getWidth() - 30, 20, juce::Justification::centred);
 }
 
 void PalozebraVinylAudioProcessorEditor::resized()
 {
     wheel.setBounds(30, 52, getWidth() - 60, 376);
-    takeLabel.setBounds(25, 448, getWidth() - 50, 24);
+    takeLabel.setBounds(20, 448, getWidth() - 40, 24);
 
-    recordButton.setBounds(62, 480, 118, 36);
-    playButton.setBounds(188, 480, 92, 36);
-    clearButton.setBounds(288, 480, 90, 36);
+    recordButton.setBounds(100, 480, 118, 36);
+    clearButton.setBounds(226, 480, 114, 36);
 }
