@@ -48,11 +48,7 @@ private:
     juce::TextButton recordButton { "REC" };
     juce::TextButton playButton { "PLAY" };
     juce::TextButton clearButton { "CLEAR" };
-    juce::Label sourceLabel;
     juce::Label takeLabel;
-
-    juce::ToggleButton midiOutButton { "MIDI CC" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> midiAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PalozebraVinylAudioProcessorEditor)
 };
