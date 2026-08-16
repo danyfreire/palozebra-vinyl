@@ -35,6 +35,18 @@ public:
         currentSpeed = targetSpeed = 1.0;
     }
 
+    // Re-align the virtual record with the current live input position without clearing history.
+    // This is used only when the host transport explicitly seeks/rewinds/loops, not on wheel release.
+    void syncToLive() noexcept
+    {
+        if (!prepared || bufferSize == 0)
+            return;
+
+        readPos = wrap(static_cast<double>(writePos) - static_cast<double>(baseDelaySamples));
+        currentSpeed = 1.0;
+        targetSpeed = 1.0;
+    }
+
     void setTargetSpeed(double speed)
     {
         targetSpeed = std::clamp(speed, -4.0, 4.0);
