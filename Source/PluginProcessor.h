@@ -39,17 +39,23 @@ public:
     juce::AudioProcessorValueTreeState& getParameters() noexcept { return parameters; }
     std::atomic<float>* getSpeedParameter() noexcept { return speedParam; }
 
-    // Internal gesture recorder: captures the platter movement, not the audio.
-    void startGestureRecording() noexcept;
+    // Timeline recorder. REC arms first; touching the platter places the take on the DAW timeline.
+    void armGestureRecording() noexcept;
     void stopGestureRecording() noexcept;
-    void startGesturePlayback() noexcept;
-    void stopGesturePlayback() noexcept;
     void clearGesture() noexcept;
 
+    void beginManualWheelTouch() noexcept;
+    void endManualWheelTouch() noexcept;
+
+    bool isGestureArmed() const noexcept { return gestureArmed.load(); }
     bool isGestureRecording() const noexcept { return gestureRecording.load(); }
-    bool isGesturePlaying() const noexcept { return gesturePlaying.load(); }
-    bool hasGesture() const noexcept { return gestureLength.load() > 0; }
+    bool isTimelineGestureActive() const noexcept { return timelineGestureActive.load(); }
+    bool hasGesture() const noexcept { return gestureStartValid.load() && gestureLength.load() > 0; }
     double getGestureLengthSeconds() const noexcept;
+    double getGestureStartSeconds() const noexcept { return gestureStartSeconds.load(); }
+
+    bool isHostPlaying() const noexcept { return hostPlaying.load(); }
+    bool hasHostTimeline() const noexcept { return hostTimelineAvailable.load(); }
 
     // Physical release: a short motor-like pitch bend back to 1x, never a timeline catch-up.
     void beginWheelRelease() noexcept;
@@ -70,14 +76,22 @@ private:
     juce::AudioProcessorValueTreeState parameters;
     std::atomic<float>* speedParam = nullptr;
 
-    // Preallocated fixed-capacity gesture storage keeps the audio callback allocation-free.
+    // Preallocated fixed-capacity gesture storage keeps normal audio playback allocation-free.
     std::vector<float> gestureBuffer;
     std::vector<float> speedCurveScratch;
     std::atomic<std::size_t> gestureLength { 0 };
-    std::atomic<double> gesturePlayPosition { 0.0 };
     std::atomic<double> gestureRecordPhase { 1.0 };
+    std::atomic<double> gestureStartSeconds { 0.0 };
+    std::atomic<bool> gestureStartValid { false };
+    std::atomic<bool> gestureArmed { false };
+    std::atomic<bool> gestureStartPending { false };
     std::atomic<bool> gestureRecording { false };
-    std::atomic<bool> gesturePlaying { false };
+    std::atomic<bool> timelineGestureActive { false };
+    std::atomic<bool> manualWheelTouch { false };
+
+    // Last transport state published by the audio thread for the UI.
+    std::atomic<bool> hostPlaying { false };
+    std::atomic<bool> hostTimelineAvailable { false };
 
     // Short spin-up/spin-down envelope generated at audio rate on mouse release.
     std::atomic<bool> releaseActive { false };
