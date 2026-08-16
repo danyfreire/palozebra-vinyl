@@ -48,6 +48,7 @@ private:
     juce::TextButton recordButton { "REC" };
     juce::TextButton clearButton { "CLEAR" };
     juce::Label takeLabel;
+    juce::HyperlinkButton websiteLink { "palozebra.com", juce::URL("https://palozebra.com") };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PalozebraVinylAudioProcessorEditor)
 };
