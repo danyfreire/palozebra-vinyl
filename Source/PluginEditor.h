@@ -46,7 +46,6 @@ private:
     VinylWheel wheel;
 
     juce::TextButton recordButton { "REC" };
-    juce::TextButton playButton { "PLAY" };
     juce::TextButton clearButton { "CLEAR" };
     juce::Label takeLabel;
 
